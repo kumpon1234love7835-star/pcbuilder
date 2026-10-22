@@ -119,7 +119,7 @@ button.danger{background:rgba(251,113,133,.14);border-color:var(--danger);color:
 <header><div class="container row"><div class="logo"><i aria-hidden="true">🛠️</i>ผู้ดูแล <span>PC Builder TH</span></div>
 <div class="hdr-actions hidden" id="hdrTools">
 <label class="switch" for="soundToggle"><input type="checkbox" id="soundToggle" checked>🔔 เสียง</label>
-<button id="notifBtn">📲 แจ้งเตือนบนเบราว์เซอร์</button>
+<button id="testBtn">🔊 ทดสอบเสียง</button><button id="notifBtn">📲 แจ้งเตือนบนเบราว์เซอร์</button>
 <button id="themeButton">☀️ / 🌙</button>
 <button id="outBtn">ออกจากระบบ</button></div></div></header>
 <main class="container">
@@ -160,24 +160,38 @@ const CONDTX={new:'มือหนึ่ง',used:'มือสอง',either:'�
 const DEV={desktop:'🖥️ คอมตั้งโต๊ะ',laptop:'💻 โน้ตบุ๊ก'};
 
 let AC=null,TT=null,unseen=0;const baseTitle=document.title;
-function chime(){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();const t=AC.currentTime;
- [[659.25,0],[783.99,.16],[1046.5,.32]].forEach(a=>{const o=AC.createOscillator(),g=AC.createGain();o.type='sine';o.frequency.value=a[0];
- g.gain.setValueAtTime(0,t+a[1]);g.gain.linearRampToValueAtTime(.25,t+a[1]+.02);g.gain.exponentialRampToValueAtTime(.0001,t+a[1]+.5);
- o.connect(g);g.connect(AC.destination);o.start(t+a[1]);o.stop(t+a[1]+.55)})}catch(e){}}
-function speak(m){try{if(!window.speechSynthesis)return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(m);u.lang='th-TH';const v=speechSynthesis.getVoices().find(v=>/^th/i.test(v.lang));if(v)u.voice=v;speechSynthesis.speak(u)}catch(e){}}
+function chime(){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();
+  const master=AC.createGain();master.gain.value=1;const comp=AC.createDynamicsCompressor();master.connect(comp);comp.connect(AC.destination);
+  const t0=AC.currentTime;
+  [0,.9].forEach(off=>[[880,0],[1108.7,.18],[1318.5,.36],[1760,.54]].forEach(a=>{
+    const o=AC.createOscillator(),g=AC.createGain(),t=t0+off+a[1];o.type='square';o.frequency.value=a[0];
+    g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(.9,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+.34);
+    o.connect(g);g.connect(master);o.start(t);o.stop(t+.36)}))}catch(e){}}
+let THV=null;
+function pickVoice(){try{THV=(speechSynthesis.getVoices()||[]).find(v=>/^th/i.test(v.lang))||null}catch(e){THV=null}return THV}
+try{if(window.speechSynthesis){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}}catch(e){}
+function speak(m){try{if(!window.speechSynthesis)return;speechSynthesis.cancel();pickVoice();
+  [1,2].forEach(()=>{const u=new SpeechSynthesisUtterance(m);u.lang='th-TH';u.volume=1;u.rate=.95;u.pitch=1;if(THV)u.voice=THV;speechSynthesis.speak(u)})}catch(e){}}
+function buzz(){try{if(navigator.vibrate)navigator.vibrate([400,200,400,200,400])}catch(e){}}
+/* ปลดล็อกเสียงด้วยการแตะครั้งแรก (เบราว์เซอร์บังคับให้มีการแตะก่อนถึงจะเล่นเสียงได้) */
+function unlockAudio(){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();
+  if(window.speechSynthesis){const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}}catch(e){}}
+document.addEventListener('click',unlockAudio);document.addEventListener('touchstart',unlockAudio,{passive:true});
 function toast(ic,tx){$('toastIc').textContent=ic;$('toastTx').textContent=tx;$('toast').classList.add('show');clearTimeout(TT);TT=setTimeout(()=>$('toast').classList.remove('show'),9000)}
 function notifyNew(x){
   const rev=x.rev>0;
   const msg=(rev?'แก้ไขสเปก: ':'จัดสเปกเสร็จ: ')+x.name+' ('+x.lv+' ปี '+x.yr+' '+x.dept+') · '+baht(x.total);
   toast(rev?'✏️':'🔔',msg);
-  if($('soundToggle').checked){chime();setTimeout(()=>speak((rev?'มีการแก้ไขสเปก ':'มีลูกค้าจัดสเปกเสร็จ ')+x.name),750)}
+  if($('soundToggle').checked){chime();buzz();setTimeout(()=>speak((rev?'มีการแก้ไขสเปก ':'มีลูกค้าจัดสเปกเสร็จ ')+x.name+' งบ '+Math.round(x.total)+' บาท'),1900)}
   if(document.hidden){unseen++;document.title='('+unseen+') '+baseTitle}
-  try{if('Notification' in window&&Notification.permission==='granted')new Notification(rev?'แก้ไขสเปก':'มีคนจัดสเปกเสร็จ',{body:msg})}catch(e){}
+  try{if('Notification' in window&&Notification.permission==='granted')new Notification(rev?'แก้ไขสเปก':'มีคนจัดสเปกเสร็จ',{body:msg,requireInteraction:true,vibrate:[400,200,400]})}catch(e){}
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){unseen=0;document.title=baseTitle}});
 $('notifBtn').addEventListener('click',async()=>{
   if(!('Notification' in window)){toast('⚠️','เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน');return}
   const p=await Notification.requestPermission();toast(p==='granted'?'✅':'⚠️',p==='granted'?'เปิดแจ้งเตือนบนเบราว์เซอร์แล้ว':'ยังไม่ได้อนุญาตการแจ้งเตือน')});
+$('testBtn').addEventListener('click',()=>{unlockAudio();chime();buzz();setTimeout(()=>speak('ทดสอบเสียง มีลูกค้าจัดสเปกเสร็จ'),1900);
+  pickVoice();toast('🔊',THV?'ทดสอบเสียงแล้ว (พบเสียงภาษาไทย: '+THV.name+')':'ทดสอบเสียงแล้ว แต่ไม่พบเสียงพูดภาษาไทยในเครื่อง ถ้าไม่มีเสียงอ่าน ดูวิธีติดตั้งเสียงไทยที่ผมแนะนำ')});
 $('themeButton').addEventListener('click',()=>document.body.classList.toggle('light'));
 
 if(!firebaseConfig||!firebaseConfig.projectId||/ใส่/.test(firebaseConfig.projectId)){
