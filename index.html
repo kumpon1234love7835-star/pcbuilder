@@ -437,7 +437,9 @@ function recNB(f){NBPICK=null;
 function showTab(t){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));['recommendation','catalog'].forEach(n=>$(n+'Section').classList.toggle('hidden',t!==n))}
 document.querySelector('.tabs').addEventListener('click',e=>{if(e.target.dataset.tab)showTab(e.target.dataset.tab)});
 $('themeButton').addEventListener('click',()=>document.body.classList.toggle('light'));
+let LASTCLICK=0;
 $('recommendButton').addEventListener('click',()=>{
+  if(Date.now()-LASTCLICK<1500)return;LASTCLICK=Date.now();
   const budget=Number($('budget').value),nm=$('customerName').value.trim().slice(0,60),dp=$('dept').value.trim().slice(0,60);
   if(!nm||!dp){$('formMsg').textContent='กรุณากรอกชื่อและแผนกวิชาให้ครบ';(nm?$('dept'):$('customerName')).focus();return}
   if(!(budget>=1000)){$('formMsg').textContent='กรุณากรอกงบประมาณอย่างน้อย 1,000 บาท';return}
@@ -468,9 +470,20 @@ function fillYears(){const n=$('level').value==='ปวช.'?3:2,cur=Number($('y
 function mkRecord(f,items,total,cool){return{rid:Date.now().toString(36)+Math.random().toString(36).slice(2,7),name:f.name,lv:f.lv,yr:f.yr,dept:f.dept,device:f.device,budget:f.budget,pur:f.pur,cond:f.cond,total,items,cool:cool||'',rev:0}}
 const itemsOf=parts=>KEYS.filter(k=>parts[k]).map(k=>({l:CAT[k],n:parts[k].name,p:parts[k].price,u:parts[k].cond==='u'?1:0}));
 function send(r){try{if(window.PCB_SEND)window.PCB_SEND(r).catch(()=>{})}catch(e){}}
-function saveBuild(){const r=mkRecord(CUR.f,itemsOf(CUR.parts),sumP(CUR.parts),coolAdvice(CUR.parts).title);CUR.rid=r.rid;CUR.rev=0;send(r)}
-function saveNB(f){const x=NBPICK,r=mkRecord(f,[{l:CAT.nb,n:x.name,p:x.price,u:0}],x.price,'');send(r)}
-function updBuild(){if(!CUR||!CUR.rid)return;clearTimeout(SEND_T);SEND_T=setTimeout(()=>{if(!CUR||!CUR.rid)return;CUR.rev=(CUR.rev||0)+1;const r=mkRecord(CUR.f,itemsOf(CUR.parts),sumP(CUR.parts),coolAdvice(CUR.parts).title);r.rid=CUR.rid;r.rev=CUR.rev;send(r)},4000)}
+/* กันกดรัว: รอ 5 วินาทีหลังกดครั้งสุดท้ายค่อยส่งหนึ่งครั้ง และถ้าข้อมูลเหมือนเดิมภายใน 5 นาทีจะไม่ส่งซ้ำ */
+let Q=null,LAST={sig:'',rid:'',rev:0,t:0,sent:false,mode:''};
+const sigOf=f=>[f.name,f.lv,f.yr,f.dept,f.device,f.budget,f.pur,f.cond].join('|');
+function queueSend(mk){clearTimeout(Q);Q=setTimeout(()=>{Q=null;const r=mk();if(r){LAST.sent=true;send(r)}},5000)}
+function curRecord(){if(!CUR||!CUR.parts||!CUR.rid)return null;const r=mkRecord(CUR.f,itemsOf(CUR.parts),sumP(CUR.parts),coolAdvice(CUR.parts).title);r.rid=CUR.rid;r.rev=LAST.sent?(CUR.rev||0):0;return r}
+function saveBuild(){const f=CUR.f,sig=sigOf(f),now=Date.now();
+  if(LAST.mode==='d'&&sig===LAST.sig&&now-LAST.t<300000){CUR.rid=LAST.rid;CUR.rev=LAST.rev;return}
+  const r=mkRecord(f,itemsOf(CUR.parts),sumP(CUR.parts),coolAdvice(CUR.parts).title);
+  CUR.rid=r.rid;CUR.rev=0;LAST={sig,rid:r.rid,rev:0,t:now,sent:false,mode:'d'};queueSend(curRecord)}
+function saveNB(f){const sig=sigOf(f),now=Date.now();
+  if(LAST.mode==='n'&&sig===LAST.sig&&now-LAST.t<300000)return;
+  const x=NBPICK,r=mkRecord(f,[{l:CAT.nb,n:x.name,p:x.price,u:0}],x.price,'');
+  LAST={sig,rid:r.rid,rev:0,t:now,sent:false,mode:'n'};queueSend(()=>r)}
+function updBuild(){if(!CUR||!CUR.rid)return;CUR.rev=(CUR.rev||0)+1;LAST.rev=CUR.rev;queueSend(curRecord)}
 $('level').addEventListener('change',fillYears);
 
 /* ===== ค้นหาสินค้า ===== */
