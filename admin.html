@@ -185,7 +185,7 @@ if(!firebaseConfig||!firebaseConfig.projectId||/ใส่/.test(firebaseConfig.p
   $('inBtn').disabled=true;
 }else{
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
-let DOCS=[],ready=false,unsub=null,freshIds=new Set();
+let DOCS=[],ready=false,unsub=null,freshIds=new Set();const NOTI=new Map();
 
 function login(){
   $('loginMsg').textContent='';
@@ -208,7 +208,9 @@ onAuthStateChanged(auth,u=>{
   const q=query(collection(db,'builds'),orderBy('ts','desc'),limit(300));
   unsub=onSnapshot(q,snap=>{
     const first=!ready;
-    snap.docChanges().forEach(c=>{if(c.type==='added'&&!first){const d=c.doc.data();freshIds.add(c.doc.id);notifyNew(d)}});
+    snap.docChanges().forEach(c=>{if(c.type==='added'&&!first){const d=c.doc.data(),sg=sigOf(d),now=Date.now();freshIds.add(c.doc.id);
+      if(!(d.rev>0)&&NOTI.has(sg)&&now-NOTI.get(sg)<300000)return; /* ข้อมูลเหมือนเดิมภายใน 5 นาที ไม่เด้งซ้ำ */
+      if(!(d.rev>0))NOTI.set(sg,now);notifyNew(d)}});
     ready=true;
     DOCS=snap.docs.map(d=>Object.assign({_id:d.id},d.data(),{_t:d.data().ts&&d.data().ts.toMillis?d.data().ts.toMillis():Date.now()}));
     $('live').textContent='🟢 เชื่อมต่อแล้ว · อัปเดตอัตโนมัติ (เปิดหน้านี้ค้างไว้เพื่อรับแจ้งเตือน)';
@@ -219,10 +221,17 @@ onAuthStateChanged(auth,u=>{
   });
 });
 
+const sigOf=d=>[d.name,d.lv,d.yr,d.dept,d.device,d.budget,d.pur,d.cond].join('|');
+/* รวมรายการ rid เดียวกัน และรายการที่ข้อมูลเหมือนกันภายใน 5 นาที (กันกดรัว) เหลือฉบับล่าสุด */
 function grouped(){
-  const m=new Map();
-  DOCS.forEach(d=>{const g=m.get(d.rid);if(!g){m.set(d.rid,{latest:d,ids:[d._id],n:1})}else{g.ids.push(d._id);g.n++;if(d._t>g.latest._t)g.latest=d}});
-  return [...m.values()].sort((a,b)=>b.latest._t-a.latest._t);
+  const gs=[];
+  DOCS.slice().sort((a,b)=>a._t-b._t).forEach(d=>{
+    const s=sigOf(d);
+    let g=gs.find(x=>x.rid===d.rid)||gs.find(x=>x.sig===s&&Math.abs(d._t-x.latest._t)<300000);
+    if(!g){gs.push({rid:d.rid,sig:s,latest:d,ids:[d._id],n:1})}
+    else{g.ids.push(d._id);g.n++;if(d._t>=g.latest._t)g.latest=d}
+  });
+  return gs.sort((a,b)=>b.latest._t-a.latest._t);
 }
 function card(g){
   const x=g.latest,fresh=g.ids.some(i=>freshIds.has(i));
