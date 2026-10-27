@@ -141,6 +141,7 @@ button.danger{background:rgba(251,113,133,.14);border-color:var(--danger);color:
 <div><label for="rQ">ค้นหา (ชื่อ / แผนก)</label><input id="rQ" type="text" autocomplete="off"></div>
 <div><label for="rLv">ระดับ / ชั้นปี</label><select id="rLv"><option value="all">ทั้งหมด</option><option value="ปวช.-1">ปวช. ปีที่ 1</option><option value="ปวช.-2">ปวช. ปีที่ 2</option><option value="ปวช.-3">ปวช. ปีที่ 3</option><option value="ปวส.-1">ปวส. ปีที่ 1</option><option value="ปวส.-2">ปวส. ปีที่ 2</option></select></div>
 </div></div>
+<div id="sideBox"></div>
 <div id="recList"></div>
 </section>
 </main>
@@ -149,7 +150,7 @@ button.danger{background:rgba(251,113,133,.14);border-color:var(--danger);color:
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,collection,query,orderBy,limit,onSnapshot,deleteDoc,doc,getDocs,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore,collection,query,orderBy,limit,onSnapshot,deleteDoc,doc,getDocs,writeBatch,setDoc,serverTimestamp,where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {firebaseConfig} from "./firebase-config.js";
 
 const $=id=>document.getElementById(id);
@@ -199,7 +200,7 @@ if(!firebaseConfig||!firebaseConfig.projectId||/ใส่/.test(firebaseConfig.p
   $('inBtn').disabled=true;
 }else{
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
-let DOCS=[],ready=false,unsub=null,freshIds=new Set();const NOTI=new Map();
+let DOCS=[],ready=false,unsub=null,unsubB=null,BLK=new Map(),STATS=new Map(),freshIds=new Set();const NOTI=new Map(),DN=new Map();
 
 function login(){
   $('loginMsg').textContent='';
@@ -214,15 +215,19 @@ $('outBtn').addEventListener('click',()=>signOut(auth));
 
 onAuthStateChanged(auth,u=>{
   if(unsub){unsub();unsub=null}
-  ready=false;DOCS=[];
+  if(unsubB){unsubB();unsubB=null}
+  ready=false;DOCS=[];BLK=new Map();
   $('loginBox').classList.toggle('hidden',!!u);
   $('dash').classList.toggle('hidden',!u);
   $('hdrTools').classList.toggle('hidden',!u);
   if(!u)return;
+  unsubB=onSnapshot(collection(db,'blocked'),s=>{BLK=new Map(s.docs.map(d=>[d.id,d.data()]));render()},()=>{});
   const q=query(collection(db,'builds'),orderBy('ts','desc'),limit(300));
   unsub=onSnapshot(q,snap=>{
     const first=!ready;
     snap.docChanges().forEach(c=>{if(c.type==='added'&&!first){const d=c.doc.data(),sg=sigOf(d),now=Date.now();freshIds.add(c.doc.id);
+      if(d.did){const ar=(DN.get(d.did)||[]).filter(t=>now-t<60000);ar.push(now);DN.set(d.did,ar);
+        if(ar.length>3){if(ar.length===4)toast('⚠️','เครื่อง '+(d.dev||String(d.did).slice(0,8))+' ส่งถี่ผิดปกติ ปิดเสียงแจ้งเตือนของเครื่องนี้ชั่วคราว (ดูปุ่มบล็อกด้านล่าง)');return}}
       if(!(d.rev>0)&&NOTI.has(sg)&&now-NOTI.get(sg)<300000)return; /* ข้อมูลเหมือนเดิมภายใน 5 นาที ไม่เด้งซ้ำ */
       if(!(d.rev>0))NOTI.set(sg,now);notifyNew(d)}});
     ready=true;
@@ -247,15 +252,49 @@ function grouped(){
   });
   return gs.sort((a,b)=>b.latest._t-a.latest._t);
 }
+function devStats(){
+  const m=new Map();
+  DOCS.forEach(d=>{if(!d.did)return;let e=m.get(d.did);if(!e){e={did:d.did,dev:d.dev||'',name:d.name,last:0,times:[]};m.set(d.did,e)}
+    e.times.push(d._t);if(d._t>=e.last){e.last=d._t;e.name=d.name;e.dev=d.dev||e.dev}});
+  m.forEach(e=>{e.times.sort((x,y)=>x-y);e.spam=false;for(let i=4;i<e.times.length;i++){if(e.times[i]-e.times[i-4]<600000){e.spam=true;break}}});
+  return m;
+}
+function devLine(x){
+  if(!x.dev&&!x.did)return'';
+  const st=STATS.get(x.did);
+  return '<p class="muted">📱 '+esc(x.dev||'ไม่ทราบรุ่น')+(x.did?' · 🆔 '+esc(String(x.did).slice(0,8)):'')+(st&&st.times.length>1?' · ส่งมา '+st.times.length+' รายการ':'')+(st&&st.spam?' · <b style="color:#f87171">⚠️ ส่งถี่ผิดปกติ</b>':'')+'</p>';
+}
+function renderSide(){
+  STATS=devStats();
+  const sp=[...STATS.values()].filter(e=>e.spam&&!BLK.has(e.did));
+  let h='';
+  if(sp.length)h+='<div class="panel"><h3>⚠️ ตรวจพบเครื่องที่ส่งถี่ผิดปกติ</h3><p class="muted">ส่งตั้งแต่ 5 รายการขึ้นไปภายใน 10 นาที</p>'+sp.map(e=>'<div class="rec"><strong>📱 '+esc(e.dev||'ไม่ทราบรุ่น')+'</strong><p class="muted">🆔 '+esc(e.did.slice(0,8))+' · ส่งมา '+e.times.length+' รายการ · ชื่อล่าสุดที่กรอก: '+esc(e.name)+'</p><div class="actions"><button data-block="'+esc(e.did)+'">🚫 บล็อก</button><button class="danger" data-blockwipe="'+esc(e.did)+'">🚫 บล็อกและลบข้อมูลของเครื่องนี้</button></div></div>').join('')+'</div>';
+  if(BLK.size)h+='<div class="panel"><h3>🚫 เครื่องที่บล็อกไว้ ('+BLK.size+')</h3>'+[...BLK].map(([id,b])=>'<div class="rec"><strong>📱 '+esc(b.dev||'ไม่ทราบรุ่น')+'</strong><p class="muted">🆔 '+esc(id.slice(0,8))+(b.name?' · ชื่อที่เคยกรอก: '+esc(b.name):'')+'</p><div class="actions"><button data-unblock="'+esc(id)+'">ปลดบล็อก</button></div></div>').join('')+'</div>';
+  $('sideBox').innerHTML=h;
+}
+$('dash').addEventListener('click',async e=>{
+  const t=e.target.closest&&e.target.closest('button');if(!t)return;
+  const b=t.dataset.block,w=t.dataset.blockwipe,u=t.dataset.unblock;
+  if(!(b||w||u))return;
+  try{
+    if(b||w){
+      const did=b||w,s=STATS.get(did)||{};
+      if(!confirm((w?'บล็อกเครื่องนี้และลบข้อมูลทั้งหมดของเครื่องนี้?':'บล็อกเครื่องนี้?')+'\nเครื่อง: '+(s.dev||did.slice(0,8))))return;
+      await setDoc(doc(db,'blocked',did),{dev:s.dev||'',name:s.name||'',at:serverTimestamp()});
+      if(w){for(;;){const q=await getDocs(query(collection(db,'builds'),where('did','==',did),limit(400)));if(q.empty)break;const bt=writeBatch(db);q.docs.forEach(d=>bt.delete(d.ref));await bt.commit()}}
+      toast('🚫','บล็อกเครื่องนี้แล้ว เครื่องนี้ส่งข้อมูลเข้ามาอีกไม่ได้');
+    }else{await deleteDoc(doc(db,'blocked',u));toast('✅','ปลดบล็อกแล้ว')}
+  }catch(err){toast('⚠️','ทำรายการไม่สำเร็จ ตรวจว่าวางกฎ firestore.rules ตัวใหม่ใน Firebase แล้ว')}
+});
 function card(g){
   const x=g.latest,fresh=g.ids.some(i=>freshIds.has(i));
   return '<div class="rec'+(fresh?' fresh':'')+'"><div class="rec-h"><div><strong>'+esc(x.name)+'</strong>'+(fresh?'<span class="badge-new">ใหม่</span>':'')
   +'<div class="chips-sum"><span class="chip">🎓 '+esc(x.lv)+' ปีที่ '+esc(x.yr)+'</span><span class="chip">🏫 '+esc(x.dept)+'</span><span class="chip">🕒 '+esc(new Date(x._t).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short'}))+'</span>'+(g.n>1?'<span class="chip">✏️ แก้ไข '+(g.n-1)+' ครั้ง</span>':'')+'</div></div><div class="price">'+baht(x.total)+'</div></div>'
   +'<p class="muted">'+(DEV[x.device]||'')+' · งบ '+baht(x.budget)+' · '+esc(PUR[x.pur]||x.pur)+(x.device==='desktop'?' · '+esc(CONDTX[x.cond]||''):'')+'</p>'
   +'<details'+(fresh?' open':'')+'><summary>ดูรายการที่จัดให้</summary><ul>'+(x.items||[]).map(i=>'<li>'+esc(i.l)+': '+esc(i.n)+(i.u?' [มือสอง]':'')+' — '+baht(i.p)+'</li>').join('')+'</ul>'+(x.cool?'<p>❄️ ระบายความร้อน: ต้องใช้ '+esc(x.cool)+'</p>':'')+'</details>'
-  +'<div class="actions"><button class="danger" data-del="'+esc(g.ids.join(','))+'">🗑️ ลบ</button></div></div>';
+  +devLine(x)+'<div class="actions"><button class="danger" data-del="'+esc(g.ids.join(','))+'">🗑️ ลบ</button>'+(x.did&&!BLK.has(x.did)?'<button data-block="'+esc(x.did)+'">🚫 บล็อกเครื่องนี้</button>':'')+(x.did&&BLK.has(x.did)?'<span class="chip">🚫 บล็อกแล้ว</span>':'')+'</div></div>';
 }
-function render(){
+function render(){renderSide();
   const q=$('rQ').value.trim().toLowerCase(),lv=$('rLv').value;
   const all=grouped(),r=all.filter(g=>{const x=g.latest;return(!q||(x.name+' '+x.dept).toLowerCase().includes(q))&&(lv==='all'||x.lv+'-'+x.yr===lv)});
   $('cnt').textContent='('+all.length+' รายการ)';

@@ -167,7 +167,7 @@ button.danger{background:rgba(251,113,133,.14);border-color:var(--danger);color:
 <p id="dbInfo"></p>
 <p>ราคาที่มีป้าย "ตรวจที่ร้าน" คือราคาที่ตรวจจากหน้าสินค้าตามวันที่ระบุ ซึ่งอาจเปลี่ยนแล้ว ส่วนราคาที่เป็น "ประมาณ" ยังไม่ได้ตรวจกับร้านและเว็บนี้ไม่ได้ดึงราคาอัตโนมัติ กรุณาตรวจรุ่น สต็อก และราคาก่อนซื้อ</p>
 <p id="storeLinks"></p>
-</div></footer>
+<p class="muted" style="font-size:.8rem">เพื่อป้องกันการส่งข้อมูลซ้ำ ๆ ระบบจะบันทึกรหัสเครื่องและรุ่นอุปกรณ์ร่วมกับข้อมูลที่คุณกรอก</p></div></footer>
 
 <script>
 "use strict";
@@ -536,14 +536,29 @@ if(typeof window!=='undefined')window.PCB={DB,cands,pickBest,check,decent,recDes
 /* ส่งผลการจัดสเปกขึ้น Firestore (ฝั่งลูกค้าสร้างข้อมูลได้อย่างเดียว อ่านไม่ได้) */
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getFirestore,collection,addDoc,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import {firebaseConfig} from "./firebase-config.js";
+import * as CFG from "./firebase-config.js";
+const firebaseConfig=CFG.firebaseConfig,TG=CFG.telegramRelayUrl||'';
+/* ส่งแจ้งเตือนเข้า Telegram ผ่านตัวกลาง Google Apps Script (โทเคนบอทอยู่ที่ตัวกลาง ไม่อยู่ในหน้าเว็บ) ส่งเฉพาะฉบับแรก */
+/* รหัสเครื่อง + รุ่นอุปกรณ์ (ให้เจ้าของเว็บบล็อกเครื่องที่ปั่นได้) */
+let DID='';try{DID=localStorage.getItem('pcb_did')||'';if(!DID){DID=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2,14);localStorage.setItem('pcb_did',DID)}}catch(e){}
+if(!DID)DID='tmp-'+Math.random().toString(36).slice(2,14)+Date.now().toString(36);
+let DEVSTR='';
+(async()=>{let model='',plat='';
+  try{const u=navigator.userAgentData;if(u){plat=u.platform||'';const h=await u.getHighEntropyValues(['model','platformVersion']);model=h.model||'';if(h.platformVersion)plat+=' '+String(h.platformVersion).split('.')[0]}}catch(e){}
+  const ua=navigator.userAgent||'';
+  if(!model){const m=ua.match(/Android[^;)]*;\s*([^;)]+?)(?:\sBuild|[;)])/);if(m&&m[1]&&m[1].trim()!=='K')model=m[1].trim()}
+  if(!plat){plat=/iPhone/.test(ua)?'iPhone (iOS)':/iPad/.test(ua)?'iPad':/Android/.test(ua)?'Android':/Windows/.test(ua)?'Windows':/Mac OS X/.test(ua)?'Mac':/Linux/.test(ua)?'Linux':''}
+  const br=/Edg\//.test(ua)?'Edge':/OPR\//.test(ua)?'Opera':/SamsungBrowser/.test(ua)?'Samsung Internet':/Firefox\//.test(ua)?'Firefox':/Chrome\//.test(ua)?'Chrome':/Safari\//.test(ua)?'Safari':'';
+  const sc=(window.screen&&screen.width)?screen.width+'x'+screen.height:'';
+  DEVSTR=[plat,model,br,sc].filter(Boolean).join(' · ').slice(0,100)})();
+function tgSend(d){if(!TG||/ใส่/.test(TG)||d.rev>0)return;try{fetch(TG,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(d)}).catch(()=>{})}catch(e){}}
 if(firebaseConfig&&firebaseConfig.projectId&&!/ใส่/.test(firebaseConfig.projectId)){
   const db=getFirestore(initializeApp(firebaseConfig));
-  window.PCB_SEND=r=>addDoc(collection(db,"builds"),{
+  window.PCB_SEND=r=>{const d={did:String(DID).slice(0,40),dev:String(DEVSTR||'').slice(0,100),
     rid:String(r.rid),name:String(r.name).slice(0,60),lv:String(r.lv),yr:Number(r.yr),dept:String(r.dept).slice(0,60),
     device:String(r.device),budget:Number(r.budget),pur:String(r.pur),cond:String(r.cond),total:Number(r.total),
     items:(r.items||[]).slice(0,15).map(i=>({l:String(i.l).slice(0,40),n:String(i.n).slice(0,160),p:Number(i.p),u:i.u?1:0})),
-    cool:String(r.cool||'').slice(0,80),rev:Number(r.rev)||0,ts:serverTimestamp()});
+    cool:String(r.cool||'').slice(0,80),rev:Number(r.rev)||0};return addDoc(collection(db,"builds"),Object.assign({},d,{ts:serverTimestamp()})).then(res=>{tgSend(d);return res})};
 }
 </script>
 </body>
